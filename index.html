@@ -19,6 +19,7 @@
     --accent-soft:#E9DCC9;
     --late:#BE6A4F;        /* terracotta */
     --late-soft:#F3E2DA;
+    --done:#8FC79B;        /* soft light green */
     --text:#2C2621;
     --text-2:#8D8378;
     --text-3:#B9AFA3;
@@ -64,13 +65,13 @@
     transition:height .3s var(--ease),margin .3s var(--ease),opacity .3s var(--ease),transform .3s var(--ease);
   }
   .row .del{
-    position:absolute;top:0;right:0;bottom:0;width:88px;
+    position:absolute;top:0;left:0;bottom:0;width:88px;
     color:#fff;font-size:15px;font-weight:600;opacity:0;transition:opacity .15s;
   }
   .row.swiping .del,.row.open .del{opacity:1}
   .row:not(.swiping):not(.open){background:var(--card)}
   .card{
-    position:relative;display:flex;align-items:center;gap:14px;
+    position:relative;display:flex;align-items:center;gap:14px;direction:rtl;text-align:right;
     background:var(--card);padding:16px 16px;min-height:58px;
     touch-action:pan-y;
     transition:transform .3s var(--ease),background-color .2s;
@@ -83,14 +84,14 @@
   }
   .check svg{position:absolute;inset:0;margin:auto;width:14px;height:14px}
   .check path{stroke:#fff;stroke-width:3;fill:none;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:20;stroke-dashoffset:20;transition:stroke-dashoffset .3s var(--ease) .05s}
-  .card.done .check{background:var(--accent);transform:scale(1)}
+  .card.done .check{background:var(--done);border-color:var(--done);transform:scale(1)}
   .card.done .check path{stroke-dashoffset:0}
   .card.pop .check{animation:pop .35s var(--ease)}
   @keyframes pop{40%{transform:scale(1.18)}}
   .body{flex:1;min-width:0}
-  .text{font-size:17px;line-height:1.35;word-wrap:break-word;white-space:pre-wrap;transition:color .25s}
+  .text{unicode-bidi:plaintext;text-align:right;font-size:17px;line-height:1.35;word-wrap:break-word;white-space:pre-wrap;transition:color .25s}
   .card.done .text{color:var(--text-2)}
-  .date{font-size:13px;color:var(--text-2);margin-top:3px}
+  .date{direction:ltr;text-align:right;font-size:13px;color:var(--text-2);margin-top:3px}
   .card.late .check{border-color:var(--late)}
   .card.late .text{color:var(--late)}
   .card.late .date{color:var(--late);opacity:.75}
@@ -143,10 +144,10 @@
     position:absolute;left:0;right:0;top:0;bottom:calc(var(--tabbar) + var(--bottom));
     background:var(--bg);z-index:6;overflow-y:auto;-webkit-overflow-scrolling:touch;
     padding:calc(var(--top) + 6px) 18px 120px;
-    transform:translateX(100%);visibility:hidden;
-    transition:transform .35s var(--ease),visibility 0s .35s;
+    transform:scale(.82);opacity:0;visibility:hidden;transform-origin:50% 45%;
+    transition:transform .32s cubic-bezier(.32,.72,0,1),opacity .25s var(--ease),visibility 0s .32s;
   }
-  .dayview.open{transform:none;visibility:visible;transition:transform .35s var(--ease)}
+  .dayview.open{transform:none;opacity:1;visibility:visible;transition:transform .42s cubic-bezier(.32,.72,0,1),opacity .2s var(--ease)}
   .back{display:flex;align-items:center;gap:2px;color:var(--accent);font-size:17px;height:44px;margin-left:-8px;padding-right:12px}
   .back svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
 
@@ -296,7 +297,7 @@
 
   function setOpen(row, open) {
     row.classList.toggle('open', open);
-    row.querySelector('.card').style.transform = open ? 'translateX(' + -DEL_W + 'px)' : '';
+    row.querySelector('.card').style.transform = open ? 'translateX(' + DEL_W + 'px)' : '';
     if (!open) setTimeout(() => { if (!row.classList.contains('open')) row.classList.remove('swiping'); }, 300);
   }
   function closeAllSwipes(except) {
@@ -311,7 +312,7 @@
       if (e.button > 0) return;
       closeAllSwipes(row);
       sx = e.clientX; sy = e.clientY; dx = 0;
-      base = row.classList.contains('open') ? -DEL_W : 0;
+      base = row.classList.contains('open') ? DEL_W : 0;
       active = true; moved = false; horiz = false; longPressed = false;
       card.classList.add('pressing');
       timer = setTimeout(() => {
@@ -334,8 +335,8 @@
       }
       if (moved && horiz) {
         let x = base + mx;
-        if (x > 0) x = 0;
-        if (x < -DEL_W) x = -DEL_W + (x + DEL_W) * 0.35; // rubber band
+        if (x < 0) x = 0;
+        if (x > DEL_W) x = DEL_W + (x - DEL_W) * 0.35; // rubber band
         dx = x;
         card.style.transition = 'none';
         card.style.transform = 'translateX(' + x + 'px)';
@@ -348,7 +349,7 @@
       card.style.transition = '';
       if (longPressed) return;
       if (moved) {
-        if (horiz) setOpen(row, dx < -DEL_W / 2);
+        if (horiz) setOpen(row, dx > DEL_W / 2);
         return;
       }
       if (cancelled) return;
