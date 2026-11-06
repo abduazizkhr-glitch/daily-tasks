@@ -51,6 +51,12 @@
     transition:opacity .25s var(--ease),transform .25s var(--ease),visibility 0s .25s;
   }
   .screen.active{opacity:1;visibility:visible;transform:none;transition:opacity .25s var(--ease),transform .25s var(--ease)}
+  .arrange{
+    position:absolute;top:calc(var(--top) + 12px);right:18px;height:32px;padding:0 14px;border-radius:16px;
+    background:var(--accent-soft);color:#8A6A44;font-size:15px;font-weight:600;transition:background-color .2s,color .2s,opacity .2s;
+  }
+  .arrange.hide{opacity:0;pointer-events:none}
+  body.arranging .arrange{background:var(--accent);color:#fff}
   .eyebrow{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-2);margin-bottom:2px}
   h1{font-size:34px;font-weight:700;letter-spacing:-.02em;margin-bottom:22px}
   .empty{color:var(--text-3);text-align:center;font-size:16px;padding:56px 20px;line-height:1.5;display:none}
@@ -58,21 +64,34 @@
   @keyframes fade{from{opacity:0}to{opacity:1}}
 
   /* ---------- task cards ---------- */
-  .list{display:flex;flex-direction:column}
+  .list{position:relative;display:flex;flex-wrap:wrap;gap:10px;direction:rtl;align-items:flex-start}
   .row{
-    position:relative;border-radius:16px;margin-bottom:10px;
+    position:relative;border-radius:16px;flex:0 1 auto;max-width:80%;min-width:96px;
     box-shadow:var(--shadow);background:var(--delete);overflow:hidden;
-    transition:height .3s var(--ease),margin .3s var(--ease),opacity .3s var(--ease),transform .3s var(--ease);
+    transition:opacity .2s var(--ease);
   }
+  .row .x{
+    display:none;position:absolute;top:-8px;left:-8px;z-index:3;width:24px;height:24px;border-radius:50%;
+    background:#A39A8F;color:#fff;place-items:center;box-shadow:0 1px 4px rgba(60,40,20,.2);
+  }
+  .row .x::before{content:"";position:absolute;inset:-10px}
+  .row .x svg{width:10px;height:10px;stroke:#fff;stroke-width:2.6;stroke-linecap:round}
+  body.arranging #today-list .row{overflow:visible;animation:jiggle .26s ease-in-out infinite alternate}
+  body.arranging #today-list .row:nth-child(2n){animation-delay:-.13s;animation-direction:alternate-reverse}
+  body.arranging #today-list .row .x{display:grid}
+  body.arranging #today-list .del{display:none}
+  body.arranging #today-list .card{touch-action:none}
+  .row.dragging{animation:none!important;z-index:10;box-shadow:0 12px 30px rgba(70,50,30,.18)}
+  @keyframes jiggle{from{rotate:-1.4deg}to{rotate:1.4deg}}
   .row .del{
-    position:absolute;top:0;left:0;bottom:0;width:88px;
+    position:absolute;top:0;left:0;bottom:0;width:80px;
     color:#fff;font-size:15px;font-weight:600;opacity:0;transition:opacity .15s;
   }
   .row.swiping .del,.row.open .del{opacity:1}
   .row:not(.swiping):not(.open){background:var(--card)}
   .card{
     position:relative;display:flex;align-items:center;gap:14px;direction:rtl;text-align:right;
-    background:var(--card);padding:16px 16px;min-height:58px;
+    background:var(--card);padding:13px 15px;min-height:50px;border-radius:16px;gap:11px;
     touch-action:pan-y;
     transition:transform .3s var(--ease),background-color .2s;
   }
@@ -183,6 +202,7 @@
 
 <!-- TODAY -->
 <section class="screen active" id="s-today">
+  <button class="arrange hide" id="arrange">Arrange</button>
   <div class="eyebrow" id="today-weekday"></div>
   <h1 id="today-date"></h1>
   <div class="list" id="today-list"></div>
@@ -266,7 +286,7 @@
 
   /* ---------- helpers ---------- */
   const $ = id => document.getElementById(id);
-  const DEL_W = 88;
+  const DEL_W = 80;
   const CHECK_SVG = '<svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg>';
   const byId = id => tasks.find(t => t.id === id);
 
@@ -278,6 +298,7 @@
     row.dataset.id = task.id;
     row.innerHTML =
       '<button class="del">Delete</button>' +
+      '<button class="x" aria-label="Delete"><svg viewBox="0 0 10 10"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></button>' +
       '<div class="card"><div class="check">' + CHECK_SVG + '</div>' +
       '<div class="body"><div class="text"></div>' +
       (ctx === 'unfinished' ? '<div class="date"></div>' : '') + '</div></div>';
@@ -286,6 +307,7 @@
     if (ctx === 'unfinished') row.querySelector('.date').textContent = fmt(task.date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
     paint(card, task);
     row.querySelector('.del').addEventListener('click', () => removeTask(task.id));
+    row.querySelector('.x').addEventListener('click', () => removeTask(task.id));
     gestures(row, card, task, ctx);
     return row;
   }
@@ -310,6 +332,7 @@
 
     card.addEventListener('pointerdown', e => {
       if (e.button > 0) return;
+      if (arranging && ctx === 'today') { startDrag(e, row); return; }
       closeAllSwipes(row);
       sx = e.clientX; sy = e.clientY; dx = 0;
       base = row.classList.contains('open') ? DEL_W : 0;
@@ -385,16 +408,89 @@
     renderCalendar();
   }
 
-  function collapse(row, done) {
-    row.style.height = row.offsetHeight + 'px';
-    void row.offsetHeight;
-    row.style.height = '0px'; row.style.marginBottom = '0px';
-    row.style.opacity = '0'; row.style.transform = 'scale(.97)';
-    setTimeout(() => { row.remove(); done && done(); }, 320);
+  // Smoothly slides the other cards into their new places after a change
+  function flip(list, mutate, skip) {
+    const before = new Map([...list.children].map(r => [r, r.getBoundingClientRect()]));
+    mutate();
+    const rows = [...list.children].filter(r => r !== skip);
+    rows.forEach(r => { r.style.transition = 'none'; r.style.transform = ''; });
+    rows.forEach(r => {
+      const b = before.get(r); if (!b) return;
+      const a = r.getBoundingClientRect();
+      const dx = b.left - a.left, dy = b.top - a.top;
+      if (dx || dy) r.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    });
+    void list.offsetWidth;
+    rows.forEach(r => { r.style.transition = 'transform .32s var(--ease),opacity .2s var(--ease)'; r.style.transform = ''; });
   }
 
+  function collapse(row, done) {
+    row.style.transition = 'opacity .2s var(--ease),transform .2s var(--ease)';
+    row.style.opacity = '0'; row.style.transform = 'scale(.8)';
+    setTimeout(() => {
+      const list = row.parentElement;
+      if (list) flip(list, () => row.remove()); else row.remove();
+      done && done();
+    }, 200);
+  }
+
+  /* ---------- arrange mode: drag cards to reorder (like iPhone apps) ---------- */
+  let arranging = false, drag = null;
+  function setArranging(on) {
+    arranging = on && $('today-list').children.length > 0;
+    document.body.classList.toggle('arranging', arranging);
+    $('arrange').textContent = arranging ? 'Done' : 'Arrange';
+    if (arranging) closeAllSwipes();
+  }
+  $('arrange').addEventListener('click', () => setArranging(!arranging));
+
+  function startDrag(e, row) {
+    e.preventDefault();
+    const list = row.parentElement, lr = list.getBoundingClientRect();
+    row.style.transition = 'none'; row.style.transform = '';
+    drag = { row, list, gx: e.clientX - (lr.left + row.offsetLeft), gy: e.clientY - (lr.top + row.offsetTop), last: null, t: 0 };
+    row.classList.add('dragging');
+    placeDrag(e);
+  }
+  function placeDrag(e) {
+    const { row, list, gx, gy } = drag, lr = list.getBoundingClientRect();
+    const tx = e.clientX - gx - (lr.left + row.offsetLeft), ty = e.clientY - gy - (lr.top + row.offsetTop);
+    row.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(1.06)';
+  }
+  document.addEventListener('pointermove', e => {
+    if (!drag) return;
+    e.preventDefault();
+    const { row, list } = drag, lr = list.getBoundingClientRect();
+    const px = e.clientX - lr.left, py = e.clientY - lr.top, now = Date.now();
+    const over = [...list.children].find(r => r !== row &&
+      px >= r.offsetLeft && px <= r.offsetLeft + r.offsetWidth && py >= r.offsetTop && py <= r.offsetTop + r.offsetHeight);
+    if (over && !(over === drag.last && now - drag.t < 400)) {
+      const kids = [...list.children];
+      const after = kids.indexOf(over) > kids.indexOf(row);
+      flip(list, () => after ? over.after(row) : over.before(row), row);
+      drag.last = over; drag.t = now;
+    }
+    placeDrag(e);
+  }, { passive: false });
+  const endDrag = () => {
+    if (!drag) return;
+    const { row, list } = drag;
+    drag = null;
+    row.classList.remove('dragging');
+    row.style.transition = 'transform .3s var(--ease)';
+    row.style.transform = '';
+    const ids = [...list.children].map(r => r.dataset.id), set = new Set(ids);
+    tasks = tasks.filter(t => !set.has(t.id)).concat(ids.map(byId).filter(Boolean));
+    save();
+  };
+  document.addEventListener('pointerup', endDrag);
+  document.addEventListener('pointercancel', endDrag);
+
   function refreshEmpties() {
-    $('today-empty').classList.toggle('show', !$('today-list').children.length);
+    const n = $('today-list').children.length;
+    $('arrange').classList.toggle('hide', n < 2 && !arranging);
+    if (!n && arranging) setArranging(false);
+    $('today-empty').classList.toggle('show', !n);
     $('unf-empty').classList.toggle('show', !$('unf-list').children.length);
     $('day-empty').classList.toggle('show', !$('day-list').children.length);
   }
@@ -438,7 +534,7 @@
     closeSheet();
   }
 
-  $('add').addEventListener('click', () => openSheet(null));
+  $('add').addEventListener('click', () => { setArranging(false); openSheet(null); });
   $('cancel').addEventListener('click', closeSheet);
   saveBtn.addEventListener('click', commit);
   overlay.addEventListener('click', e => { if (e.target === overlay) closeSheet(); });
@@ -509,6 +605,7 @@
   let tab = 'today';
   function showTab(name) {
     closeAllSwipes();
+    if (name !== 'today') setArranging(false);
     if (name === tab && name === 'history' && openDayKey) { closeDay(); return; }
     tab = name;
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
