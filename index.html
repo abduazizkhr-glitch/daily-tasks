@@ -57,6 +57,33 @@
   }
   .arrange.hide{opacity:0;pointer-events:none}
   body.arranging .arrange{background:var(--accent);color:#fff}
+  .move{
+    position:absolute;top:calc(var(--top) + 12px);right:18px;height:32px;padding:0 14px;border-radius:16px;z-index:2;
+    background:var(--accent-soft);color:#8A6A44;font-size:15px;font-weight:600;transition:background-color .2s,color .2s,opacity .2s;
+  }
+  .move.hide{opacity:0;pointer-events:none}
+  .move.on{background:var(--accent);color:#fff}
+  .selecting .row{transition:opacity .2s var(--ease)}
+  .selecting .row .card{box-shadow:inset 0 0 0 2px transparent;transition:box-shadow .2s var(--ease),background-color .2s,transform .3s var(--ease)}
+  .selecting .row.picked .card{box-shadow:inset 0 0 0 2px var(--accent);background:#FBF4EA}
+  .selecting .row.nopick{opacity:.35;pointer-events:none}
+  .movebar{
+    position:absolute;left:50%;bottom:calc(var(--tabbar) + var(--bottom) + 18px);z-index:7;
+    height:52px;padding:0 26px;border-radius:26px;background:var(--accent);color:#fff;font-size:17px;font-weight:600;white-space:nowrap;
+    box-shadow:0 4px 14px rgba(150,110,60,.28);
+    transform:translate(-50%,20px);opacity:0;visibility:hidden;
+    transition:transform .3s var(--ease),opacity .25s var(--ease),visibility 0s .3s;
+  }
+  .movebar.show{transform:translate(-50%,0);opacity:1;visibility:visible;transition:transform .3s var(--ease),opacity .25s var(--ease)}
+  .movebar:disabled{background:#D9C7AE}
+  .movebar:active:not(:disabled){transform:translate(-50%,0) scale(.96)}
+  .toast{
+    position:absolute;left:50%;top:calc(var(--top) + 8px);z-index:30;padding:10px 18px;border-radius:20px;
+    background:rgba(44,38,33,.88);color:#fff;font-size:15px;font-weight:500;white-space:nowrap;
+    transform:translate(-50%,-12px);opacity:0;visibility:hidden;
+    transition:transform .3s var(--ease),opacity .25s var(--ease),visibility 0s .3s;
+  }
+  .toast.show{transform:translate(-50%,0);opacity:1;visibility:visible;transition:transform .3s var(--ease),opacity .25s var(--ease)}
   .eyebrow{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-2);margin-bottom:2px}
   h1{font-size:34px;font-weight:700;letter-spacing:-.02em;margin-bottom:22px}
   .empty{color:var(--text-3);text-align:center;font-size:16px;padding:56px 20px;line-height:1.5;display:none}
@@ -227,6 +254,7 @@
 
 <!-- DAY PAGE (from History) -->
 <section class="dayview" id="dayview">
+  <button class="move hide" id="day-move">Move</button>
   <button class="back" id="back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>History</button>
   <div class="eyebrow" id="day-weekday" style="margin-top:8px"></div>
   <h1 id="day-date"></h1>
@@ -236,11 +264,15 @@
 
 <!-- UNFINISHED -->
 <section class="screen" id="s-unfinished">
+  <button class="move hide" id="unf-move">Move</button>
   <div class="eyebrow">&nbsp;</div>
   <h1>Unfinished</h1>
   <div class="list" id="unf-list"></div>
   <div class="empty" id="unf-empty">Nothing left behind.</div>
 </section>
+
+<button class="movebar" id="movebar" disabled>Move to Today</button>
+<div class="toast" id="toast"></div>
 
 <button class="add" id="add" aria-label="Add task"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
 
@@ -334,6 +366,10 @@
       if (e.button > 0) return;
       if (arranging && ctx === 'today') { startDrag(e, row); return; }
       closeAllSwipes(row);
+      if (selecting && ctx !== 'today') {
+        sx = e.clientX; sy = e.clientY; active = true; moved = false; horiz = false; longPressed = false;
+        return;
+      }
       sx = e.clientX; sy = e.clientY; dx = 0;
       base = row.classList.contains('open') ? DEL_W : 0;
       active = true; moved = false; horiz = false; longPressed = false;
@@ -351,6 +387,7 @@
     card.addEventListener('pointermove', e => {
       if (!active) return;
       const mx = e.clientX - sx, my = e.clientY - sy;
+      if (selecting && ctx !== 'today') { if (Math.hypot(mx, my) > 8) moved = true; return; }
       if (!moved && Math.hypot(mx, my) > 8) {
         moved = true; clearTimeout(timer); card.classList.remove('pressing');
         horiz = Math.abs(mx) > Math.abs(my);
@@ -370,6 +407,7 @@
       if (!active) return;
       active = false; clearTimeout(timer); card.classList.remove('pressing');
       card.style.transition = '';
+      if (selecting && ctx !== 'today') { if (!moved && !cancelled) pick(row, task); return; }
       if (longPressed) return;
       if (moved) {
         if (horiz) setOpen(row, dx > DEL_W / 2);
@@ -493,7 +531,69 @@
     $('today-empty').classList.toggle('show', !n);
     $('unf-empty').classList.toggle('show', !$('unf-list').children.length);
     $('day-empty').classList.toggle('show', !$('day-list').children.length);
+    const dayCan = !!openDayKey && openDayKey < today() && tasks.some(t => t.date === openDayKey && !t.done);
+    $('day-move').classList.toggle('hide', !dayCan && selecting !== 'day');
+    $('unf-move').classList.toggle('hide', !$('unf-list').children.length && selecting !== 'unfinished');
   }
+
+  /* ---------- move unfinished tasks to today ---------- */
+  let selecting = null; // null | 'day' | 'unfinished'
+  const picked = new Set();
+  const selList = () => $(selecting === 'day' ? 'day-list' : 'unf-list');
+  const selBtn = () => $(selecting === 'day' ? 'day-move' : 'unf-move');
+
+  function startSelect(where) {
+    stopSelect();
+    selecting = where;
+    closeAllSwipes();
+    const list = selList();
+    list.classList.add('selecting');
+    [...list.children].forEach(r => { const t = byId(r.dataset.id); r.classList.toggle('nopick', !t || t.done); });
+    selBtn().classList.add('on'); selBtn().textContent = 'Cancel';
+    updateMoveBar();
+    $('movebar').classList.add('show');
+  }
+  function stopSelect() {
+    if (!selecting) return;
+    const list = selList();
+    list.classList.remove('selecting');
+    [...list.children].forEach(r => r.classList.remove('picked', 'nopick'));
+    selBtn().classList.remove('on'); selBtn().textContent = 'Move';
+    selecting = null; picked.clear();
+    $('movebar').classList.remove('show');
+    refreshEmpties();
+  }
+  function pick(row, task) {
+    if (task.done) return;
+    if (picked.has(task.id)) picked.delete(task.id); else picked.add(task.id);
+    row.classList.toggle('picked', picked.has(task.id));
+    updateMoveBar();
+  }
+  function updateMoveBar() {
+    const n = picked.size;
+    $('movebar').disabled = !n;
+    $('movebar').textContent = n ? 'Move ' + n + ' to Today' : 'Select tasks to move';
+  }
+  let toastTimer;
+  function toast(msg) {
+    const el = $('toast'); el.textContent = msg; el.classList.add('show');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
+  }
+  $('day-move').addEventListener('click', () => selecting === 'day' ? stopSelect() : startSelect('day'));
+  $('unf-move').addEventListener('click', () => selecting === 'unfinished' ? stopSelect() : startSelect('unfinished'));
+  $('movebar').addEventListener('click', () => {
+    if (!picked.size) return;
+    const k = today(), ids = new Set(picked);
+    const moving = tasks.filter(t => ids.has(t.id) && !t.done);
+    moving.forEach(t => { t.date = k; });
+    tasks = tasks.filter(t => !ids.has(t.id)).concat(moving);
+    save();
+    const list = selList(), n = moving.length;
+    [...list.children].filter(r => ids.has(r.dataset.id)).forEach(r => collapse(r, refreshEmpties));
+    stopSelect();
+    renderCalendar();
+    toast(n === 1 ? 'Moved 1 task to Today' : 'Moved ' + n + ' tasks to Today');
+  });
 
   /* ---------- add / edit sheet ---------- */
   let editingId = null;
@@ -599,12 +699,13 @@
     $('dayview').scrollTop = 0;
     $('dayview').classList.add('open');
   }
-  function closeDay() { $('dayview').classList.remove('open'); openDayKey = null; renderCalendar(); }
+  function closeDay() { stopSelect(); $('dayview').classList.remove('open'); openDayKey = null; renderCalendar(); }
   $('back').addEventListener('click', closeDay);
 
   let tab = 'today';
   function showTab(name) {
     closeAllSwipes();
+    stopSelect();
     if (name !== 'today') setArranging(false);
     if (name === tab && name === 'history' && openDayKey) { closeDay(); return; }
     tab = name;
@@ -623,6 +724,7 @@
     const k = today();
     if (k === currentDay) return;
     currentDay = k;
+    stopSelect();
     renderToday();
     renderUnfinished();
     renderCalendar();
